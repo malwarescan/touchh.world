@@ -281,11 +281,11 @@ REMEMBER: Extract ANY identifying information you see. Even "Red brick building 
                     
                     // Calculate name similarity
                     const nameLower = place.name.toLowerCase()
-                    const visionNameLower = visionResult.name.toLowerCase()
+                    const visionNameLower = visionResult.name?.toLowerCase() || ''
                     let nameScore = 0
-                    if (nameLower === visionNameLower) nameScore = 1.0
-                    else if (nameLower.includes(visionNameLower) || visionNameLower.includes(nameLower)) nameScore = 0.7
-                    else {
+                    if (visionNameLower && nameLower === visionNameLower) nameScore = 1.0
+                    else if (visionNameLower && (nameLower.includes(visionNameLower) || visionNameLower.includes(nameLower))) nameScore = 0.7
+                    else if (visionNameLower) {
                       // Simple word overlap
                       const visionWords = visionNameLower.split(/\s+/)
                       const placeWords = nameLower.split(/\s+/)

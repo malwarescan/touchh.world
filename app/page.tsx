@@ -7,9 +7,13 @@ import { downscaleFrame, extractROI } from '@/lib/frameUtils'
 interface ContextCard {
   title: string
   subtitle?: string
+  description?: string
+  details?: string
+  year?: string | null
   confidence: number
   x: number // Normalized 0-1
   y: number // Normalized 0-1
+  url?: string
 }
 
 export default function Home() {
