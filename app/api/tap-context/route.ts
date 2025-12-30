@@ -322,106 +322,93 @@ REMEMBER: Extract ANY identifying information you see. Even "Red brick building 
           console.log('Tap-context: [VISION+LOCATION] Searching nearby places (all types)')
           
           // Use nearby search - this API is more commonly enabled
-          // Search with multiple radius attempts to find the building
-          const radii = [50, 100, 200] // Try progressively larger radii
+          // Optimize: Use single search with broader radius (150m) and let our scoring algorithms
+          // filter for the best match. This reduces latency (1 call vs up to 3) and API costs.
+          // Test 2.2: "One Tap, One Gemini Call, 1 Places Call"
           
-          for (const radius of radii) {
-            const nearbyUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${latitude},${longitude}&radius=${radius}&key=${placesApiKey}`
+          const searchRadius = 150
+          const nearbyUrl = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${latitude},${longitude}&radius=${searchRadius}&key=${placesApiKey}`
+          
+          console.log('Tap-context: [VISION+LOCATION] Trying nearby search with radius:', searchRadius)
+          
+          const nearbyResponse = await fetch(nearbyUrl)
+          if (nearbyResponse.ok) {
+            const nearbyData = await nearbyResponse.json()
+            console.log('Tap-context: [VISION+LOCATION] Nearby search response:', {
+              status: nearbyData.status,
+              resultsCount: nearbyData.results?.length || 0,
+              radius: searchRadius
+            })
             
-            console.log('Tap-context: [VISION+LOCATION] Trying nearby search with radius:', radius)
-            
-            const nearbyResponse = await fetch(nearbyUrl)
-            if (nearbyResponse.ok) {
-              const nearbyData = await nearbyResponse.json()
-              console.log('Tap-context: [VISION+LOCATION] Nearby search response:', {
-                status: nearbyData.status,
-                resultsCount: nearbyData.results?.length || 0,
-                radius
-              })
+            if (nearbyData.status === 'REQUEST_DENIED') {
+              console.error('Tap-context: [VISION+LOCATION] Nearby Search API denied - check API key permissions')
+            } else if (nearbyData.results && nearbyData.results.length > 0) {
+              // Calculate which place is most likely in the tap direction
+              const userLat = latitude
+              const userLng = longitude
               
-              if (nearbyData.status === 'REQUEST_DENIED') {
-                console.error('Tap-context: [VISION+LOCATION] Nearby Search API denied - check API key permissions')
-                break
-              }
-              
-              if (nearbyData.results && nearbyData.results.length > 0) {
-                // Calculate which place is most likely in the tap direction
-                const userLat = latitude
-                const userLng = longitude
+              // Calculate bearing to each place and compare with tap direction
+              const placesWithScores = nearbyData.results
+              .map((place: any) => {
+                const placeLat = place.geometry?.location?.lat
+                const placeLng = place.geometry?.location?.lng
+                if (!placeLat || !placeLng) return null
                 
-                // Calculate bearing to each place and compare with tap direction
-                const placesWithScores = nearbyData.results
-                .map((place: any) => {
-                  const placeLat = place.geometry?.location?.lat
-                  const placeLng = place.geometry?.location?.lng
-                  if (!placeLat || !placeLng) return null
-                  
-                  // Calculate bearing from user to place
-                  const dLng = (placeLng - userLng) * Math.PI / 180
-                  const y = Math.sin(dLng) * Math.cos(placeLat * Math.PI / 180)
-                  const x = Math.cos(userLat * Math.PI / 180) * Math.sin(placeLat * Math.PI / 180) -
-                           Math.sin(userLat * Math.PI / 180) * Math.cos(placeLat * Math.PI / 180) * Math.cos(dLng)
-                  const bearing = Math.atan2(y, x) * 180 / Math.PI
-                  
-                  // Calculate distance
-                  const R = 6371000
-                  const dLat = (placeLat - userLat) * Math.PI / 180
-                  const dLng2 = (placeLng - userLng) * Math.PI / 180
-                  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                           Math.cos(userLat * Math.PI / 180) * Math.cos(placeLat * Math.PI / 180) *
-                           Math.sin(dLng2/2) * Math.sin(dLng2/2)
-                  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-                  const distance = R * c
-                  
-                  // Calculate tap direction bearing (simplified - assumes camera pointing north)
-                  const tapBearing = Math.atan2(direction.x, direction.z) * 180 / Math.PI
-                  
-                  // Score: closer distance + better direction match + type match if available
-                  let score = 1 / (1 + distance / 50) // Distance score
-                  
-                  // Direction match (within 45 degrees)
-                  const bearingDiff = Math.abs(bearing - tapBearing)
-                  const directionScore = bearingDiff < 45 ? 1 - (bearingDiff / 45) : 0
-                  score += directionScore * 0.5
-                  
-                  // Type match bonus
-                  if (visionResult?.type && place.types) {
-                    const typeMatch = place.types.some((t: string) => 
-                      t.toLowerCase().includes(visionResult!.type!.toLowerCase()) ||
-                      visionResult!.type!.toLowerCase().includes(t.toLowerCase())
-                    )
-                    if (typeMatch) score += 0.3
-                  }
-                  
-                  return { place, distance, bearing, score }
-                })
-                .filter((item: any) => item !== null)
-                .sort((a: any, b: any) => b.score - a.score)
+                // Calculate bearing from user to place
+                const dLng = (placeLng - userLng) * Math.PI / 180
+                const y = Math.sin(dLng) * Math.cos(placeLat * Math.PI / 180)
+                const x = Math.cos(userLat * Math.PI / 180) * Math.sin(placeLat * Math.PI / 180) -
+                         Math.sin(userLat * Math.PI / 180) * Math.cos(placeLat * Math.PI / 180) * Math.cos(dLng)
+                const bearing = Math.atan2(y, x) * 180 / Math.PI
                 
-                if (placesWithScores.length > 0 && placesWithScores[0].distance < 100) {
-                  placeDetails = placesWithScores[0].place
-                  placeId = placeDetails.place_id
-                  console.log('Tap-context: [VISION+LOCATION] Found by direction:', {
-                    name: placeDetails.name,
-                    distance: placesWithScores[0].distance.toFixed(0) + 'm',
-                    score: placesWithScores[0].score.toFixed(2),
-                    types: placeDetails.types
-                  })
-                  break // Found a match, stop searching radii
-                } else if (placesWithScores.length > 0) {
-                  // Even if slightly further, use the best match if it's close enough
-                  const bestMatch = placesWithScores[0]
-                  if (bestMatch.distance < 150 && bestMatch.score > 0.3) {
-                    placeDetails = bestMatch.place
-                    placeId = placeDetails.place_id
-                    console.log('Tap-context: [VISION+LOCATION] Found by direction (extended):', {
-                      name: placeDetails.name,
-                      distance: bestMatch.distance.toFixed(0) + 'm',
-                      score: bestMatch.score.toFixed(2)
-                    })
-                    break // Found a match, stop searching radii
-                  }
+                // Calculate distance
+                const R = 6371000
+                const dLat = (placeLat - userLat) * Math.PI / 180
+                const dLng2 = (placeLng - userLng) * Math.PI / 180
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                         Math.cos(userLat * Math.PI / 180) * Math.cos(placeLat * Math.PI / 180) *
+                         Math.sin(dLng2/2) * Math.sin(dLng2/2)
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+                const distance = R * c
+                
+                // Calculate tap direction bearing (simplified - assumes camera pointing north)
+                const tapBearing = Math.atan2(direction.x, direction.z) * 180 / Math.PI
+                
+                // Score: closer distance + better direction match + type match if available
+                let score = 1 / (1 + distance / 50) // Distance score
+                
+                // Direction match (within 45 degrees)
+                const bearingDiff = Math.abs(bearing - tapBearing)
+                const directionScore = bearingDiff < 45 ? 1 - (bearingDiff / 45) : 0
+                score += directionScore * 0.5
+                
+                // Type match bonus
+                if (visionResult?.type && place.types) {
+                  const typeMatch = place.types.some((t: string) => 
+                    t.toLowerCase().includes(visionResult!.type!.toLowerCase()) ||
+                    visionResult!.type!.toLowerCase().includes(t.toLowerCase())
+                  )
+                  if (typeMatch) score += 0.3
                 }
+                
+                return { place, distance, bearing, score }
+              })
+              .filter((item: any) => item !== null)
+              .sort((a: any, b: any) => b.score - a.score)
+              
+              if (placesWithScores.length > 0) {
+                 const bestMatch = placesWithScores[0]
+                 // Reasonable threshold: score > 0.2 means vaguely in the right direction
+                 if (bestMatch.distance < searchRadius && bestMatch.score > 0.2) {
+                   placeDetails = bestMatch.place
+                   placeId = placeDetails.place_id
+                   console.log('Tap-context: [VISION+LOCATION] Found by direction:', {
+                     name: placeDetails.name,
+                     distance: bestMatch.distance.toFixed(0) + 'm',
+                     score: bestMatch.score.toFixed(2),
+                     types: placeDetails.types
+                   })
+                 }
               }
             }
           }
