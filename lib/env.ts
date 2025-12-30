@@ -28,12 +28,6 @@ export const serverConfig = {
       get apiKey() {
         return requireEnv('GOOGLE_API_KEY')
       },
-      get projectNumber() {
-        return requireEnv('GOOGLE_PROJECT_NUMBER')
-      },
-      get projectResource() {
-        return requireEnv('GOOGLE_PROJECT_RESOURCE')
-      },
     }
   },
   get gemini() {
